@@ -122,7 +122,10 @@ func UpdateSkillsFromRepo(repoURL string, skillTargets map[string]string, opts I
 
 // lookupSkillSubdir resolves a skill subdir that discovery filtered out by
 // checking the cloned repo directly for its SKILL.md. Mirrors the direct-stat
-// fast path used by single-skill updates (resolveSubdir).
+// fast path used by single-skill updates (resolveSubdir). Symlinks are
+// resolved and the result must stay inside the clone, and SKILL.md itself
+// must be a regular file, so repository-controlled symlinks cannot point the
+// lookup at arbitrary host paths.
 func lookupSkillSubdir(repoPath, subdir string) (SkillInfo, bool) {
 	if repoPath == "" || subdir == "" || subdir == "." {
 		return SkillInfo{}, false
@@ -131,9 +134,21 @@ func lookupSkillSubdir(repoPath, subdir string) (SkillInfo, bool) {
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || path.IsAbs(cleaned) {
 		return SkillInfo{}, false
 	}
-	skillFile := filepath.Join(repoPath, filepath.FromSlash(cleaned), "SKILL.md")
-	info, err := os.Stat(skillFile)
-	if err != nil || info.IsDir() {
+	resolvedRoot, err := filepath.EvalSymlinks(repoPath)
+	if err != nil {
+		return SkillInfo{}, false
+	}
+	resolvedDir, err := filepath.EvalSymlinks(filepath.Join(repoPath, filepath.FromSlash(cleaned)))
+	if err != nil {
+		return SkillInfo{}, false
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolvedDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return SkillInfo{}, false
+	}
+	skillFile := filepath.Join(resolvedDir, "SKILL.md")
+	info, err := os.Lstat(skillFile)
+	if err != nil || !info.Mode().IsRegular() {
 		return SkillInfo{}, false
 	}
 	fm := utils.ParseFrontmatterFields(skillFile, []string{"description", "license"})

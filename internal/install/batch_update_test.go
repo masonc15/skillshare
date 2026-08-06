@@ -261,6 +261,45 @@ func TestLookupSkillSubdir(t *testing.T) {
 	}
 }
 
+func TestLookupSkillSubdir_RejectsSymlinkEscapes(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "SKILL.md"), []byte("---\nname: outside\n---\n# outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	outsideDir := filepath.Join(outside, "outside-skill")
+	if err := os.MkdirAll(outsideDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outsideDir, "SKILL.md"), []byte("---\nname: outside\n---\n# outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := t.TempDir()
+
+	// SKILL.md is a symlink pointing outside the clone.
+	linkFileDir := filepath.Join(repo, ".claude", "skills", "link-file")
+	if err := os.MkdirAll(linkFileDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "SKILL.md"), filepath.Join(linkFileDir, "SKILL.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, ok := lookupSkillSubdir(repo, ".claude/skills/link-file"); ok {
+		t.Error("expected symlinked SKILL.md to be rejected")
+	}
+
+	// The skill directory itself is a symlink pointing outside the clone.
+	if err := os.MkdirAll(filepath.Join(repo, ".claude", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(repo, ".claude", "skills", "link-dir")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, ok := lookupSkillSubdir(repo, ".claude/skills/link-dir"); ok {
+		t.Error("expected symlinked skill directory escaping the clone to be rejected")
+	}
+}
+
 func TestUpdateSkillsFromRepo_SkillOnlyInTargetDotDirNotStale(t *testing.T) {
 	origDirs := TargetDotDirs
 	TargetDotDirs = map[string]bool{".claude": true, ".cursor": true, ".skillshare": true}
