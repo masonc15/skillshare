@@ -33,6 +33,7 @@ func (uc *updateContext) makeInstallOpts() install.InstallOptions {
 	opts := install.InstallOptions{
 		Force:          true,
 		AuditOverride:  uc.opts.force,
+		Reinstall:      uc.opts.force,
 		Update:         true,
 		SkipAudit:      uc.opts.skipAudit,
 		AuditThreshold: uc.opts.threshold,
