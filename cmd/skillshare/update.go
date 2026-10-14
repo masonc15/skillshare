@@ -499,6 +499,9 @@ func logUpdateOp(cfgPath string, names []string, opts *updateOptions, mode strin
 		if result.securityFailed > 0 {
 			a["security_failed"] = result.securityFailed
 		}
+		if result.upToDate > 0 {
+			a["up_to_date"] = result.upToDate
+		}
 		if result.skipped > 0 {
 			a["skipped"] = result.skipped
 		}
