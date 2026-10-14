@@ -58,6 +58,7 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 	var prunedNames []string
 	var missingRepoNames []string
 	var statusFailedEntries []batchBlockedEntry
+	var fetchFailedEntries []batchBlockedEntry
 
 	// Group skills by RepoURL to optimize updates
 	repoGroups := make(map[string][]updateTarget)
@@ -192,6 +193,7 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 
 		batchResult, err := install.UpdateSkillsFromRepo(repoURL, branch, skillTargetMap, batchOpts)
 		if err != nil {
+			fetchFailedEntries = append(fetchFailedEntries, batchBlockedEntry{name: repoURL, errMsg: err.Error()})
 			for _, t := range groupTargets {
 				progressBar.UpdateTitle(fmt.Sprintf("Failed %s: %v", t.name, err))
 				result.skipped++
@@ -289,6 +291,9 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 	// Render results
 	if !uc.opts.dryRun {
 		displayUpdateBlockedSection(blockedEntries)
+		for _, e := range fetchFailedEntries {
+			ui.Warning("Could not fetch %s: %s", e.name, e.errMsg)
+		}
 		for _, e := range statusFailedEntries {
 			ui.Error("%s: %s", e.name, e.errMsg)
 		}
