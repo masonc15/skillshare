@@ -67,7 +67,7 @@ flowchart TD
 |------|-------------|
 | `--all, -a` | 更新所有 tracked 儲存庫/skills，或在 `update agents --all` 中更新所有 agents。位於[已跟進的 source 連結](../targets/configuration.md#follow_source_links)背後的 tracked repo 會被略過並顯示警告，因為那是你自己的 checkout；請以名稱更新它 |
 | `--group, -G <name>` | 更新群組中所有可更新的 skills，或某個 agent 子目錄中所有 agents |
-| `--force, -f` | 捨棄本機變更並強制執行，即使有 audit 發現的問題 |
+| `--force, -f` | 捨棄本機變更並強制執行，即使有 audit 發現的問題，並重新安裝已在 upstream commit 的遠端 skill |
 | `--dry-run, -n` | 預覽而不做任何變更 |
 | `--skip-audit` | 跳過更新後的安全性 audit 關卡 |
 | `--audit-threshold <t>`, `--threshold <t>`, `-T <t>` | 覆寫更新 audit 的封鎖門檻（`critical|high|medium|low|info`；簡寫：`c|h|m|l|i`，以及 `crit`、`med`） |
@@ -105,6 +105,8 @@ skillshare update --all --json
 ```
 
 可能的 `status` 值：`updated`、`skipped`、`failed`、`security_blocked`。當某個項目失敗時，會包含 `error` 欄位。
+
+批次更新時，若遠端 skill 已在 upstream commit，會保持不變並計入 `up_to_date` 欄位。數量為 0 時省略此欄位。
 
 當 tracked 儲存庫已在 metadata 中宣告但實際磁碟上缺失時，每個項目會被回報為已跳過的 `repo` 項目，附上簡短的 `error`（`clone directory absent`），並在彙總的 `missing_tracked_repos` 中列出名稱及一次性的復原提示：
 
@@ -220,7 +222,9 @@ skillshare update --all
 
 這會更新：
 1. 所有 tracked 儲存庫（git pull）
-2. 所有帶有來源 metadata 的 skills（重新安裝）
+2. 所有帶有來源 metadata 的 skills（upstream 有變更時重新安裝）
+
+`update --all` 與 `update --group` 會依儲存庫將遠端 skill 分組，最多同時取得 8 個儲存庫。取得前會先執行 `git ls-remote`；若分支仍指向該儲存庫中所有 skill 安裝時的 commit，就略過該儲存庫。否則只 clone 要更新的 skill 所在資料夾，資料夾沒有變更的 skill 則維持不動。使用 `--force` 可重新安裝所有 skill。取得失敗的儲存庫會顯示警告，其中的 skill 計為 skipped。
 
 ### 輸出範例
 
@@ -229,7 +233,7 @@ $ skillshare update --all
 
 ✓ Audit     3 skills, no findings
 
-✓ Updated 4, 1 skipped · 6.2s
+✓ Updated 4, 12 up to date, 1 skipped · 6.2s
 
 Next
   skillshare sync  link the changes into your targets
@@ -404,7 +408,7 @@ skillshare update --all -p --skip-audit  # 跳過安全性 audit 關卡
 | 類型 | 方法 | 判斷依據 |
 |------|--------|-------------|
 | **Tracked 儲存庫**（`_repo`） | `git pull` | 以 `_` 開頭且有 `.git/` 目錄的資料夾 |
-| **遠端 skill**（有 metadata） | 從來源重新安裝 | 列於 `.metadata.json` |
+| **遠端 skill**（有 metadata） | upstream 有變更時從來源重新安裝 | 列於 `.metadata.json` |
 | **從本機路徑安裝** | 從記錄的路徑重新複製 | 列於 `.metadata.json`，且 `type: local` |
 | **本機 skill** | 跳過 | 未列於 `.metadata.json` |
 

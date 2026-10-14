@@ -67,7 +67,7 @@ flowchart TD
 |------|-------------|
 | `--all, -a` | Update all tracked repos/skills, or all agents when used as `update agents --all`. A tracked repo behind a [followed source link](../targets/configuration.md#follow_source_links) is skipped with a warning, since it is your own checkout; update it by name |
 | `--group, -G <name>` | Update all updatable skills in a group, or all agents in an agent subdirectory |
-| `--force, -f` | Discard local changes and proceed despite audit findings |
+| `--force, -f` | Discard local changes, proceed despite audit findings, and reinstall remote skills that are already at the upstream commit |
 | `--dry-run, -n` | Preview without making changes |
 | `--skip-audit` | Skip the post-update security audit gate |
 | `--audit-threshold <t>`, `--threshold <t>`, `-T <t>` | Override update audit block threshold (`critical|high|medium|low|info`; shorthand: `c|h|m|l|i`, plus `crit`, `med`) |
@@ -105,6 +105,8 @@ skillshare update --all --json
 ```
 
 可能的 `status` 值：`updated`、`skipped`、`failed`、`security_blocked`。当某项失败时，会包含 `error` 字段。
+
+批量更新时，如果远程 skill 已经处于 upstream commit，会保持不变并计入 `up_to_date` 字段。计数为 0 时省略该字段。
 
 当元数据中声明了 tracked repos 但在磁盘上缺失时，每个都会被报告为 `skipped` 的 `repo` 项，并附带简短的 `error`（`clone directory absent`），同时一个聚合的 `missing_tracked_repos` 摘要会列出名称和一次性的恢复提示：
 
@@ -220,7 +222,9 @@ skillshare update --all
 
 这会更新：
 1. 所有 tracked repositories（git pull）
-2. 所有带来源 metadata 的 skills（重新安装）
+2. 所有带来源 metadata 的 skills（upstream 有变化时重新安装）
+
+`update --all` 和 `update --group` 会按仓库对远程 skill 分组，最多同时获取 8 个仓库。获取前会先运行 `git ls-remote`；如果分支仍指向该仓库中所有 skill 安装时的 commit，就跳过该仓库。否则只 clone 要更新的 skill 所在的文件夹，文件夹没有变化的 skill 保持不变。使用 `--force` 可重新安装所有 skill。获取失败的仓库会显示警告，其中的 skill 计为 skipped。
 
 ### 示例输出
 
@@ -229,7 +233,7 @@ $ skillshare update --all
 
 ✓ Audit     3 skills, no findings
 
-✓ Updated 4, 1 skipped · 6.2s
+✓ Updated 4, 12 up to date, 1 skipped · 6.2s
 
 Next
   skillshare sync  link the changes into your targets
@@ -404,7 +408,7 @@ skillshare update --all -p --skip-audit  # Skip security audit gate
 | Type | Method | Detected by |
 |------|--------|-------------|
 | **Tracked repo** (`_repo`) | `git pull` | `_`-prefixed folder with a `.git/` directory |
-| **Remote skill** (with metadata) | Reinstall from source | Listed in `.metadata.json` |
+| **Remote skill** (with metadata) | Reinstall from source when upstream changed | Listed in `.metadata.json` |
 | **Local-path install** | Re-copy from the recorded path | Listed in `.metadata.json` with `type: local` |
 | **Local skill** | Skipped | Not listed in `.metadata.json` |
 

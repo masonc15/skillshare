@@ -67,7 +67,7 @@ flowchart TD
 |------|-------------|
 | `--all, -a` | Update all tracked repos/skills, or all agents when used as `update agents --all`. A tracked repo behind a [followed source link](../targets/configuration.md#follow_source_links) is skipped with a warning, since it is your own checkout; update it by name |
 | `--group, -G <name>` | Update all updatable skills in a group, or all agents in an agent subdirectory |
-| `--force, -f` | Discard local changes and proceed despite audit findings |
+| `--force, -f` | Discard local changes, proceed despite audit findings, and reinstall remote skills that are already at the upstream commit |
 | `--dry-run, -n` | Preview without making changes |
 | `--skip-audit` | Skip the post-update security audit gate |
 | `--audit-threshold <t>`, `--threshold <t>`, `-T <t>` | Override update audit block threshold (`critical|high|medium|low|info`; shorthand: `c|h|m|l|i`, plus `crit`, `med`) |
@@ -105,6 +105,8 @@ skillshare update --all --json
 ```
 
 Possible `status` values: `updated`, `skipped`, `failed`, `security_blocked`. When an item fails, the `error` field is included.
+
+When a batch update finds remote skills already at the upstream commit, it leaves them alone and counts them in an `up_to_date` field. The field is omitted when the count is zero.
 
 When tracked repos are declared in metadata but missing on disk, each is reported as a skipped `repo` item with a concise `error` (`clone directory absent`), and an aggregated `missing_tracked_repos` summary carries the names plus a one-shot rehydration hint:
 
@@ -220,7 +222,9 @@ skillshare update --all
 
 This updates:
 1. All tracked repositories (git pull)
-2. All skills with source metadata (re-install)
+2. All skills with source metadata (reinstall when upstream changed)
+
+`update --all` and `update --group` group remote skills by repository and fetch up to 8 repositories at once. Before fetching, skillshare runs `git ls-remote` and skips any repository whose branch still points at the commit every skill in it was installed from. Otherwise it clones only the folders of the skills being updated, and leaves alone any skill whose folder did not change. Use `--force` to reinstall every skill anyway. A repository that fails to fetch prints a warning and its skills count as skipped.
 
 ### Example Output
 
@@ -229,7 +233,7 @@ $ skillshare update --all
 
 ✓ Audit     3 skills, no findings
 
-✓ Updated 4, 1 skipped · 6.2s
+✓ Updated 4, 12 up to date, 1 skipped · 6.2s
 
 Next
   skillshare sync  link the changes into your targets
@@ -404,7 +408,7 @@ skillshare update --all -p --skip-audit  # Skip security audit gate
 | Type | Method | Detected by |
 |------|--------|-------------|
 | **Tracked repo** (`_repo`) | `git pull` | `_`-prefixed folder with a `.git/` directory |
-| **Remote skill** (with metadata) | Reinstall from source | Listed in `.metadata.json` |
+| **Remote skill** (with metadata) | Reinstall from source when upstream changed | Listed in `.metadata.json` |
 | **Local-path install** | Re-copy from the recorded path | Listed in `.metadata.json` with `type: local` |
 | **Local skill** | Skipped | Not listed in `.metadata.json` |
 
