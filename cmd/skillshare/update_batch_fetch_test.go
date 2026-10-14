@@ -76,4 +76,12 @@ func TestRepoGroupIsCurrent(t *testing.T) {
 	if repoGroupIsCurrent(url, "no-such-branch", current) {
 		t.Fatal("a missing ref must force a fetch")
 	}
+	// A skill pinned to a full commit never moves; an abbreviated pin cannot
+	// be compared with a recorded full SHA, so it fetches.
+	if !repoGroupIsCurrent(url, head, current) {
+		t.Fatal("a full-SHA pin matching the recorded commit must be current")
+	}
+	if repoGroupIsCurrent(url, head[:7], current) {
+		t.Fatal("an abbreviated pin must force a fetch")
+	}
 }
