@@ -114,3 +114,34 @@ func TestUpdateAll_WarnsWhenRepoFetchFails(t *testing.T) {
 	result.AssertAnyOutputContains(t, "grouped.git")
 	result.AssertAnyOutputContains(t, "2 skipped")
 }
+
+// Project mode shares the batch path; unchanged skills must stay up to date
+// there too.
+func TestUpdateProject_UnchangedGroupedSkillsAreUpToDate(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+	projectRoot := sb.SetupProjectDir("claude")
+
+	remote := filepath.Join(sb.Root, "project-grouped.git")
+	work := filepath.Join(sb.Root, "project-grouped-work")
+	gitInit(t, remote, true)
+	gitClone(t, remote, work)
+	for _, name := range []string{"alpha", "beta"} {
+		writeGroupedSkill(t, work, name, "v1")
+	}
+	gitAddCommit(t, work, "add skills")
+	gitPush(t, work)
+	for _, name := range []string{"alpha", "beta"} {
+		sb.RunCLIInDir(projectRoot, "install", "file://"+remote+"//skills/"+name, "-p", "--skip-audit").AssertSuccess(t)
+	}
+
+	result := sb.RunCLIInDir(projectRoot, "update", "--all", "-p", "--skip-audit", "--json")
+	result.AssertSuccess(t)
+	var got updateCounts
+	if err := json.Unmarshal([]byte(result.Stdout), &got); err != nil {
+		t.Fatalf("parse update JSON: %v\n%s", err, result.Stdout)
+	}
+	if got.Updated != 0 || got.UpToDate != 2 {
+		t.Fatalf("project mode, unchanged upstream: got %+v, want 0 updated and 2 up to date", got)
+	}
+}
