@@ -26,6 +26,18 @@ type BatchUpdateResult struct {
 	Current map[string]bool
 }
 
+// RepoUpdate is a repository fetched for a batch update but not yet applied.
+// PrepareRepoUpdate only touches a temp dir, so callers may prepare several
+// repos concurrently; Apply writes the source dir and metadata and must not run
+// concurrently with another Apply. Close removes the temp clone.
+type RepoUpdate struct {
+	RepoURL      string
+	CommitHash   string
+	discovery    *DiscoveryResult
+	skillTargets map[string]string
+	opts         InstallOptions
+}
+
 // UpdateSkillsFromRepo updates multiple skills that belong to the same git repository.
 // It clones the repository once to a temporary directory and then installs/updates
 // each requested skill from that local copy.
@@ -34,6 +46,19 @@ type BatchUpdateResult struct {
 // This avoids assuming the local path mirrors the repo structure.
 // branch is the branch the skills were installed from (empty = remote default).
 func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string, opts InstallOptions) (*BatchUpdateResult, error) {
+	update, err := PrepareRepoUpdate(repoURL, branch, skillTargets, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer update.Close()
+	return update.Apply(opts.OnProgress), nil
+}
+
+// PrepareRepoUpdate clones repoURL once for the skills in skillTargets. When
+// every target is a subdir it uses a sparse checkout of just those subdirs and
+// falls back to a full clone if that fails. opts.OnProgress receives clone
+// progress.
+func PrepareRepoUpdate(repoURL, branch string, skillTargets map[string]string, opts InstallOptions) (*RepoUpdate, error) {
 	if repoURL == "" {
 		return nil, fmt.Errorf("repoURL is required")
 	}
@@ -44,26 +69,87 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 	}
 	source.Branch = branch
 
-	// 1. Discover skills from the repo (clones once)
 	discovery, err := discoverForBatchUpdate(source, skillTargets, opts.OnProgress)
 	if err != nil {
 		return nil, err
 	}
-	defer CleanupDiscovery(discovery)
+
+	update := &RepoUpdate{
+		RepoURL:      repoURL,
+		CommitHash:   discovery.CommitHash,
+		discovery:    discovery,
+		skillTargets: skillTargets,
+		opts:         opts,
+	}
+	if update.CommitHash == "" {
+		if hash, hashErr := getGitCommit(update.repoPath()); hashErr == nil {
+			update.CommitHash = hash
+		}
+	}
+	return update, nil
+}
+
+// discoverForBatchUpdate clones only the requested skill subdirs when it can.
+// A root skill ("" or ".") needs the whole tree, so it keeps the full clone.
+func discoverForBatchUpdate(source *Source, skillTargets map[string]string, onProgress ProgressCallback) (*DiscoveryResult, error) {
+	if subdirs, ok := sparseBatchSubdirs(skillTargets); ok && gitSupportsSparseCheckout() {
+		sparseSource := *source
+		if discovery, err := discoverFromGitPaths(&sparseSource, subdirs, onProgress); err == nil {
+			*source = sparseSource
+			return discovery, nil
+		}
+	}
+	return DiscoverFromGitWithProgress(source, onProgress)
+}
+
+// sparseBatchSubdirs returns the cleaned, sorted subdirs of skillTargets, or
+// false when any target is the repo root or escapes it.
+func sparseBatchSubdirs(skillTargets map[string]string) ([]string, bool) {
+	if len(skillTargets) == 0 {
+		return nil, false
+	}
+	subdirs := make([]string, 0, len(skillTargets))
+	for subdir := range skillTargets {
+		cleaned := path.Clean(strings.ReplaceAll(strings.TrimSpace(subdir), "\\", "/"))
+		if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || path.IsAbs(cleaned) {
+			return nil, false
+		}
+		subdirs = append(subdirs, cleaned)
+	}
+	sort.Strings(subdirs)
+	return subdirs, true
+}
+
+func (u *RepoUpdate) repoPath() string {
+	return filepath.Join(u.discovery.RepoPath, "repo")
+}
+
+// Close removes the temporary clone. It is safe to call more than once.
+func (u *RepoUpdate) Close() {
+	if u == nil || u.discovery == nil {
+		return
+	}
+	CleanupDiscovery(u.discovery)
+	u.discovery = nil
+}
+
+// Apply installs each requested skill from the fetched repo. onProgress
+// receives one BatchUpdateProgressPrefix line per skill.
+func (u *RepoUpdate) Apply(onProgress ProgressCallback) *BatchUpdateResult {
+	opts := u.opts
+	opts.OnProgress = onProgress
+	discovery := u.discovery
+	skillTargets := u.skillTargets
 
 	result := &BatchUpdateResult{
-		RepoURL:    repoURL,
-		CommitHash: discovery.CommitHash,
+		RepoURL:    u.RepoURL,
+		CommitHash: u.CommitHash,
 		Results:    make(map[string]*InstallResult),
 		Errors:     make(map[string]error),
 		Current:    make(map[string]bool),
 	}
-	repoPath := filepath.Join(discovery.RepoPath, "repo")
-	if result.CommitHash == "" {
-		if hash, hashErr := getGitCommit(repoPath); hashErr == nil {
-			result.CommitHash = hash
-		}
-	}
+	repoPath := u.repoPath()
+	fullHash, _ := getGitFullHash(repoPath)
 
 	// Create a map for quick lookup in discovery
 	discoveryMap := make(map[string]SkillInfo)
@@ -77,7 +163,6 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 	if opts.SourceDir != "" {
 		store, _ = loadMetadataFile(opts.SourceDir)
 	}
-	fullHash, _ := getGitFullHash(repoPath)
 	totalSkills := len(skillTargets)
 	processedSkills := 0
 
@@ -135,38 +220,7 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 		emitBatchSkillProgress(opts.OnProgress, processedSkills, totalSkills, repoSubdir)
 	}
 
-	return result, nil
-}
-
-// discoverForBatchUpdate clones only the requested skill subdirs when it can.
-// A root skill ("" or ".") needs the whole tree, so it keeps the full clone.
-func discoverForBatchUpdate(source *Source, skillTargets map[string]string, onProgress ProgressCallback) (*DiscoveryResult, error) {
-	if subdirs, ok := sparseBatchSubdirs(skillTargets); ok && gitSupportsSparseCheckout() {
-		sparseSource := *source
-		if discovery, err := discoverFromGitPaths(&sparseSource, subdirs, onProgress); err == nil {
-			*source = sparseSource
-			return discovery, nil
-		}
-	}
-	return DiscoverFromGitWithProgress(source, onProgress)
-}
-
-// sparseBatchSubdirs returns the cleaned, sorted subdirs of skillTargets, or
-// false when any target is the repo root or escapes it.
-func sparseBatchSubdirs(skillTargets map[string]string) ([]string, bool) {
-	if len(skillTargets) == 0 {
-		return nil, false
-	}
-	subdirs := make([]string, 0, len(skillTargets))
-	for subdir := range skillTargets {
-		cleaned := path.Clean(strings.ReplaceAll(strings.TrimSpace(subdir), "\\", "/"))
-		if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || path.IsAbs(cleaned) {
-			return nil, false
-		}
-		subdirs = append(subdirs, cleaned)
-	}
-	sort.Strings(subdirs)
-	return subdirs, true
+	return result
 }
 
 // lookupSkillSubdir resolves a skill subdir that discovery filtered out by

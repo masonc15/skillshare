@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -152,90 +153,92 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 			progressBar.SetHeader(ui.FormatPhaseHeader(phaseCurrent, phaseTotal, "Updating %s from %s...", plural(groupedCount, "grouped skill"), plural(len(repoGroups), "repo")))
 		}
 	}
-	for groupKey, groupTargets := range repoGroups {
-		repoURL, branch := splitURLBranch(groupKey)
-		if uc.opts.dryRun {
-			for _, t := range groupTargets {
+	groupKeys := make([]string, 0, len(repoGroups))
+	for k := range repoGroups {
+		groupKeys = append(groupKeys, k)
+	}
+	sort.Strings(groupKeys)
+
+	if uc.opts.dryRun {
+		for _, k := range groupKeys {
+			for _, t := range repoGroups[k] {
 				progressBar.UpdateTitle(fmt.Sprintf("Updating %s", t.name))
 				progressBar.Increment()
 				result.skipped++
 			}
-			continue
 		}
-
-		progressBar.UpdateTitle(fmt.Sprintf("Updating %d skills from %s", len(groupTargets), repoURL))
-
-		skillTargetMap := make(map[string]string)
-		pathToTarget := make(map[string]updateTarget)
-		for _, t := range groupTargets {
-			if t.meta == nil {
+	} else if len(groupKeys) > 0 {
+		jobs := make([]*repoGroupJob, 0, len(groupKeys))
+		for _, k := range groupKeys {
+			job, missing := newRepoGroupJob(k, repoGroups[k])
+			for _, t := range missing {
 				ui.Warning("Skipping %s: missing metadata", t.name)
 				result.skipped++
+			}
+			jobs = append(jobs, job)
+		}
+		progressBar.UpdateTitle(fmt.Sprintf("Fetching %s", plural(len(jobs), "repo")))
+
+		// Fetches run concurrently; results are applied here one at a time, so
+		// source-dir and metadata writes stay sequential.
+		for job := range fetchRepoGroups(jobs, uc.makeInstallOpts()) {
+			if job.err != nil {
+				for range job.targets {
+					result.skipped++
+					progressBar.Increment()
+				}
 				continue
 			}
-			subdir := t.meta.Subdir
-			if subdir == "" {
-				subdir = "."
-			}
-			skillTargetMap[subdir] = t.path
-			pathToTarget[subdir] = t
-		}
 
-		batchOpts := uc.makeInstallOpts()
-		if ui.IsTTY() {
-			batchOpts.OnProgress = func(line string) {
-				if handleGroupedBatchProgress(progressBar, line) {
-					return
+			progressBar.UpdateTitle(fmt.Sprintf("Updating %d skills from %s", len(job.targets), job.repoURL))
+			var onProgress install.ProgressCallback
+			if ui.IsTTY() {
+				onProgress = func(line string) {
+					if handleGroupedBatchProgress(progressBar, line) {
+						return
+					}
+					progressBar.UpdateTitle(line)
 				}
-				progressBar.UpdateTitle(line)
 			}
-		}
+			batchResult := job.update.Apply(onProgress)
+			job.update.Close()
 
-		batchResult, err := install.UpdateSkillsFromRepo(repoURL, branch, skillTargetMap, batchOpts)
-		if err != nil {
-			for _, t := range groupTargets {
-				progressBar.UpdateTitle(fmt.Sprintf("Failed %s: %v", t.name, err))
-				result.skipped++
-				progressBar.Increment()
-			}
-			continue
-		}
+			for subdir := range job.skillTargetMap {
+				t := job.pathToTarget[subdir]
 
-		for subdir := range skillTargetMap {
-			t := pathToTarget[subdir]
-
-			if err := batchResult.Errors[subdir]; err != nil {
-				if isStaleError(err) {
-					if uc.opts.prune {
-						if pruneErr := pruneSkill(t.path, t.name, uc); pruneErr == nil {
-							prunedNames = append(prunedNames, t.name)
-							result.pruned++
+				if err := batchResult.Errors[subdir]; err != nil {
+					if isStaleError(err) {
+						if uc.opts.prune {
+							if pruneErr := pruneSkill(t.path, t.name, uc); pruneErr == nil {
+								prunedNames = append(prunedNames, t.name)
+								result.pruned++
+							} else {
+								result.skipped++
+							}
 						} else {
+							staleNames = append(staleNames, t.name)
 							result.skipped++
 						}
+					} else if isSecurityError(err) {
+						result.securityFailed++
+						blockedEntries = append(blockedEntries, batchBlockedEntry{name: t.name, errMsg: err.Error()})
 					} else {
-						staleNames = append(staleNames, t.name)
 						result.skipped++
 					}
-				} else if isSecurityError(err) {
-					result.securityFailed++
-					blockedEntries = append(blockedEntries, batchBlockedEntry{name: t.name, errMsg: err.Error()})
+				} else if res := batchResult.Results[subdir]; res != nil {
+					result.updated++
+					auditEntries = append(auditEntries, batchAuditEntryFromInstallResult(t.name, res))
 				} else {
 					result.skipped++
 				}
-			} else if res := batchResult.Results[subdir]; res != nil {
-				result.updated++
-				auditEntries = append(auditEntries, batchAuditEntryFromInstallResult(t.name, res))
-			} else {
-				result.skipped++
 			}
-		}
 
-		// Non-TTY: increment progress bar for each skill in this group.
-		// In TTY mode, handleGroupedBatchProgress already increments via OnProgress.
-		if !ui.IsTTY() {
-			for range skillTargetMap {
-				progressBar.Increment()
+			// Non-TTY: increment progress bar for each skill in this group.
+			// In TTY mode, handleGroupedBatchProgress already increments via OnProgress.
+			if !ui.IsTTY() {
+				for range job.skillTargetMap {
+					progressBar.Increment()
+				}
 			}
 		}
 	}
