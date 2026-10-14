@@ -67,7 +67,7 @@ flowchart TD
 |------|-------------|
 | `--all, -a` | すべての tracked repos/skills を更新、または `update agents --all` として使う場合はすべての agents を更新。[たどられた source リンク](../targets/configuration.md#follow_source_links)の背後にある tracked repo は、あなた自身のチェックアウトであるため警告付きでスキップされます。名前を指定して更新してください |
 | `--group, -G <name>` | グループ内の更新可能なすべての skill、または agent サブディレクトリ内のすべての agent を更新 |
-| `--force, -f` | ローカルの変更を破棄し、audit の検出結果があっても続行 |
+| `--force, -f` | ローカルの変更を破棄し、audit の検出結果があっても続行し、すでに upstream の commit にあるリモート skill も再インストール |
 | `--dry-run, -n` | 変更を加えずにプレビュー |
 | `--skip-audit` | 更新後の security audit gate をスキップ |
 | `--audit-threshold <t>`, `--threshold <t>`, `-T <t>` | update の audit ブロックしきい値を上書き（`critical|high|medium|low|info`；省略形: `c|h|m|l|i`、加えて `crit`、`med`） |
@@ -105,6 +105,8 @@ skillshare update --all --json
 ```
 
 取りうる `status` の値: `updated`、`skipped`、`failed`、`security_blocked`。項目が失敗した場合、`error` フィールドが含まれます。
+
+バッチ更新でリモート skill がすでに upstream の commit にある場合、その skill はそのままにして `up_to_date` フィールドに数えます。件数が 0 のときはこのフィールドを省略します。
 
 tracked repos が metadata に宣言されているがディスク上に存在しない場合、それぞれがスキップされた `repo` 項目として簡潔な `error`（`clone directory absent`）と共に報告され、集計された `missing_tracked_repos` サマリーに名前と再水和（rehydration）のヒントがまとめて含まれます。
 
@@ -220,7 +222,9 @@ skillshare update --all
 
 これにより以下が更新されます:
 1. すべての tracked repositories（git pull）
-2. source metadata を持つすべての skill（再インストール）
+2. source metadata を持つすべての skill（upstream が変わったときに再インストール）
+
+`update --all` と `update --group` はリモート skill をリポジトリごとにまとめ、各リポジトリを 1 回だけ clone します。フォルダが upstream で変わっていない skill には手を付けず、up to date として数えます。すべてを再インストールするには `--force` を使います。
 
 ### 出力例
 
@@ -229,7 +233,7 @@ $ skillshare update --all
 
 ✓ Audit     3 skills, no findings
 
-✓ Updated 4, 1 skipped · 6.2s
+✓ Updated 4, 12 up to date, 1 skipped · 6.2s
 
 Next
   skillshare sync  link the changes into your targets
@@ -404,7 +408,7 @@ skillshare update --all -p --skip-audit  # security audit gate をスキップ
 | タイプ | 方法 | 検出方法 |
 |------|--------|-------------|
 | **Tracked repo**（`_repo`） | `git pull` | `_` で始まり `.git/` ディレクトリを持つフォルダ |
-| **Remote skill**（metadata 付き） | source から再インストール | `.metadata.json` に記載されている |
+| **Remote skill**（metadata 付き） | upstream が変わったときに source から再インストール | `.metadata.json` に記載されている |
 | **ローカルパスからのインストール** | 記録されたパスから再コピー | `.metadata.json` に `type: local` で記載されている |
 | **Local skill** | スキップ | `.metadata.json` に記載されていない |
 

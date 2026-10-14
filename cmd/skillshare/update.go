@@ -517,14 +517,14 @@ func logUpdateOp(cfgPath string, names []string, opts *updateOptions, mode strin
 }
 
 func printUpdateHelp() {
-	printHelp("skillshare update <name>... [options]\n       skillshare update [agents] <name|--all> [options]\n       skillshare update --group <group> [options]\n       skillshare update --all [options]", "Update one or more skills or tracked repositories.\n\nFor tracked repos (_repo-name): runs git pull\nFor regular skills: reinstalls from stored source metadata\n\nIf a positional name matches a group directory (not a repo or skill), it is\nautomatically expanded to all updatable skills in that group.\n\nSafety: Tracked repos with uncommitted changes are skipped by default, and\nupdates with audit findings at/above the block threshold are rolled back.\nUse --force to override both; --skip-audit skips scanning entirely.",
+	printHelp("skillshare update <name>... [options]\n       skillshare update [agents] <name|--all> [options]\n       skillshare update --group <group> [options]\n       skillshare update --all [options]", "Update one or more skills or tracked repositories.\n\nFor tracked repos (_repo-name): runs git pull\nFor regular skills: reinstalls from stored source metadata\n(--all and --group skip skills already at the upstream commit)\n\nIf a positional name matches a group directory (not a repo or skill), it is\nautomatically expanded to all updatable skills in that group.\n\nSafety: Tracked repos with uncommitted changes are skipped by default, and\nupdates with audit findings at/above the block threshold are rolled back.\nUse --force to override both; --skip-audit skips scanning entirely.",
 		helpGroup{title: "Arguments", rows: []helpRow{
 			{"name...", "Skill name(s) or tracked repo name(s)\nSupports glob patterns (e.g. \"core-*\", \"_team-?\")"},
 		}},
 		helpGroup{title: "Options", rows: []helpRow{
 			{"-a, --all", "Update all tracked repos + skills with metadata"},
 			{"-G, --group <name>", "Update all updatable skills in a group (repeatable)"},
-			{"-f, --force", "Discard local changes and proceed despite audit findings"},
+			{"-f, --force", "Discard local changes, proceed despite audit findings,\nand reinstall skills already at the upstream commit"},
 			{"-n, --dry-run", "Preview without making changes"},
 			{"--skip-audit", "Skip post-update security audit"},
 			{"-T, --audit-threshold, --threshold <t>", ""},

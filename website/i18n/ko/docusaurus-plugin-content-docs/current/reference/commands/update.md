@@ -67,7 +67,7 @@ flowchart TD
 |------|-------------|
 | `--all, -a` | 모든 tracked 저장소/skill을 업데이트하거나, `update agents --all`로 사용 시 모든 agent를 업데이트. [따라간 source 링크](../targets/configuration.md#follow_source_links) 뒤의 tracked repo는 여러분 자신의 checkout이므로 경고와 함께 건너뜁니다. 이름을 지정해 update하세요 |
 | `--group, -G <name>` | 그룹 내 업데이트 가능한 모든 skill을 업데이트하거나, agent 하위 디렉터리의 모든 agent를 업데이트 |
-| `--force, -f` | 로컬 변경 사항을 버리고 audit findings에도 불구하고 진행 |
+| `--force, -f` | 로컬 변경 사항을 버리고 audit findings에도 불구하고 진행하며, 이미 upstream commit에 있는 원격 skill도 재설치 |
 | `--dry-run, -n` | 변경 없이 미리보기 |
 | `--skip-audit` | 업데이트 후 보안 audit gate를 건너뜀 |
 | `--audit-threshold <t>`, `--threshold <t>`, `-T <t>` | update audit block threshold 재정의(`critical|high|medium|low|info`; 축약형: `c|h|m|l|i`, 그리고 `crit`, `med`) |
@@ -105,6 +105,8 @@ skillshare update --all --json
 ```
 
 가능한 `status` 값: `updated`, `skipped`, `failed`, `security_blocked`. 항목이 실패하면 `error` 필드가 포함됩니다.
+
+배치 업데이트에서 원격 skill이 이미 upstream commit에 있으면 그대로 두고 `up_to_date` 필드에 집계합니다. 개수가 0이면 이 필드는 생략됩니다.
 
 tracked 저장소가 메타데이터에 선언되어 있지만 디스크에 없는 경우, 각각은 간결한 `error`(`clone directory absent`)와 함께 skipped `repo` 항목으로 보고되며, 집계된 `missing_tracked_repos` 요약에는 이름과 일회성 재수화(rehydration) 힌트가 포함됩니다:
 
@@ -220,7 +222,9 @@ skillshare update --all
 
 이는 다음을 업데이트합니다:
 1. 모든 tracked 저장소(git pull)
-2. source metadata가 있는 모든 skill(재설치)
+2. source metadata가 있는 모든 skill(upstream이 바뀌었을 때 재설치)
+
+`update --all`과 `update --group`은 원격 skill을 저장소별로 묶어 저장소마다 한 번만 clone합니다. upstream에서 폴더가 바뀌지 않은 skill은 그대로 두고 up to date로 집계합니다. 모든 skill을 다시 설치하려면 `--force`를 사용하세요.
 
 ### 출력 예시
 
@@ -229,7 +233,7 @@ $ skillshare update --all
 
 ✓ Audit     3 skills, no findings
 
-✓ Updated 4, 1 skipped · 6.2s
+✓ Updated 4, 12 up to date, 1 skipped · 6.2s
 
 Next
   skillshare sync  link the changes into your targets
@@ -404,7 +408,7 @@ skillshare update --all -p --skip-audit  # 보안 audit gate 건너뛰기
 | Type | Method | 감지 방법 |
 |------|--------|-------------|
 | **Tracked repo**(`_repo`) | `git pull` | `_`로 시작하고 `.git/` 디렉터리가 있는 폴더 |
-| **Remote skill**(metadata 포함) | source에서 재설치 | `.metadata.json`에 등록됨 |
+| **Remote skill**(metadata 포함) | upstream이 바뀌었을 때 source에서 재설치 | `.metadata.json`에 등록됨 |
 | **로컬 경로 설치** | 기록된 경로에서 다시 복사 | `.metadata.json`에 `type: local`로 등록됨 |
 | **Local skill** | 건너뜀 | `.metadata.json`에 등록되지 않음 |
 
