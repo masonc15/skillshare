@@ -66,6 +66,56 @@ func discoverFromGitWithProgressImpl(source *Source, onProgress ProgressCallback
 	}, nil
 }
 
+// discoverFromGitPaths is discoverFromGitWithProgressImpl restricted to a
+// sparse checkout of subdirs: only those trees' blobs are downloaded, so a
+// batch update of one skill in a huge monorepo stays cheap. Skills outside the
+// subdirs are not discovered. Callers fall back to the full clone on error.
+func discoverFromGitPaths(source *Source, subdirs []string, onProgress ProgressCallback) (*DiscoveryResult, error) {
+	if !isGitInstalled() {
+		return nil, fmt.Errorf("git is not installed or not in PATH")
+	}
+	if err := resolveWebRef(source); err != nil {
+		return nil, err
+	}
+
+	tempDir, err := os.MkdirTemp("", "skillshare-discover-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+
+	repoPath := filepath.Join(tempDir, "repo")
+	if err := sparseClonePaths(source.CloneURL, subdirs, repoPath, source.ref(), source.authEnv(), onProgress); err != nil {
+		cleanupTempRepo(tempDir)
+		return nil, fmt.Errorf("failed to clone repository: %w", err)
+	}
+	source.recordCommit(repoPath)
+
+	skills := discoverSkills(repoPath, true)
+	for i := range skills {
+		if skills[i].Path == "." {
+			skills[i].Name = source.Name
+			break
+		}
+	}
+	agents := discoverAgents(repoPath, len(skills) > 0)
+	skills, agents, err = constrainDiscoveryToExplicitSkill(source, skills, agents)
+	if err != nil {
+		cleanupTempRepo(tempDir)
+		return nil, err
+	}
+
+	commitHash, _ := getGitCommit(repoPath)
+
+	return &DiscoveryResult{
+		RepoPath:   tempDir,
+		Skills:     skills,
+		Agents:     agents,
+		Source:     source,
+		CommitHash: commitHash,
+		Warnings:   SubmoduleWarnings(repoPath, source.authEnv()),
+	}, nil
+}
+
 // discoverFromGitImpl is the non-progress variant used by the public facade.
 func discoverFromGitImpl(source *Source) (*DiscoveryResult, error) {
 	return discoverFromGitWithProgressImpl(source, nil)

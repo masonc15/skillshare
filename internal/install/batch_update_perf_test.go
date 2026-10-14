@@ -118,3 +118,65 @@ func TestUpdateSkillsFromRepo_TreeMatchRefreshesStoreCommit(t *testing.T) {
 			entry.Commit, entry.Version, head, result.CommitHash)
 	}
 }
+
+// Batch updates of subdir skills must check out only the requested subdirs,
+// not the whole repository.
+func TestDiscoverFromGitPaths_ChecksOutOnlyRequestedSubdirs(t *testing.T) {
+	repo := initTestRepo(t)
+	writeSkill(t, repo, "skills/wanted", "# wanted")
+	writeSkill(t, repo, "skills/wanted/nested", "# nested")
+	writeSkill(t, repo, "skills/unwanted", "# unwanted")
+	if err := os.MkdirAll(filepath.Join(repo, "big"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "big", "blob.bin"), make([]byte, 1024), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitAdd(t, repo, ".")
+	gitCommit(t, repo, "add big")
+
+	source, err := ParseSource("file://" + repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := discoverFromGitPaths(source, []string{"skills/wanted"}, nil)
+	if err != nil {
+		t.Fatalf("discoverFromGitPaths: %v", err)
+	}
+	defer CleanupDiscovery(discovery)
+
+	checkout := filepath.Join(discovery.RepoPath, "repo")
+	for _, p := range []string{"skills/wanted/SKILL.md", "skills/wanted/nested/SKILL.md"} {
+		if _, err := os.Stat(filepath.Join(checkout, filepath.FromSlash(p))); err != nil {
+			t.Fatalf("expected %s in sparse checkout: %v", p, err)
+		}
+	}
+	for _, p := range []string{"skills/unwanted/SKILL.md", "big/blob.bin"} {
+		if _, err := os.Stat(filepath.Join(checkout, filepath.FromSlash(p))); !os.IsNotExist(err) {
+			t.Fatalf("expected %s outside sparse checkout, stat err=%v", p, err)
+		}
+	}
+
+	paths := map[string]bool{}
+	for _, s := range discovery.Skills {
+		paths[s.Path] = true
+	}
+	if !paths["skills/wanted"] || !paths["skills/wanted/nested"] || paths["skills/unwanted"] {
+		t.Fatalf("unexpected discovered skills: %v", paths)
+	}
+	if discovery.CommitHash == "" || source.Commit == "" {
+		t.Fatalf("expected commit recorded, discovery=%q source=%q", discovery.CommitHash, source.Commit)
+	}
+}
+
+func TestSparseBatchSubdirs(t *testing.T) {
+	got, ok := sparseBatchSubdirs(map[string]string{"b/x": "", "a/y/": ""})
+	if !ok || len(got) != 2 || got[0] != "a/y" || got[1] != "b/x" {
+		t.Fatalf("got %v %v", got, ok)
+	}
+	for _, root := range []string{".", "", "../escape", "/abs"} {
+		if _, ok := sparseBatchSubdirs(map[string]string{"skills/a": "", root: ""}); ok {
+			t.Fatalf("%q must force a full clone", root)
+		}
+	}
+}

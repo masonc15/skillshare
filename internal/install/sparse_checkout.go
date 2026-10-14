@@ -44,8 +44,21 @@ func supportsSparseCheckoutVersion(versionOutput string) bool {
 }
 
 func sparseCloneSubdir(url, subdir, destPath, branch string, extraEnv []string, onProgress ProgressCallback) error {
-	subdir = strings.TrimSpace(subdir)
-	if subdir == "" {
+	return sparseClonePaths(url, []string{subdir}, destPath, branch, extraEnv, onProgress)
+}
+
+// sparseClonePaths is sparseCloneSubdir for several subdirs at once, so a
+// batch update fetches only the blobs of the skills it refreshes.
+func sparseClonePaths(url string, subdirs []string, destPath, branch string, extraEnv []string, onProgress ProgressCallback) error {
+	paths := make([]string, 0, len(subdirs))
+	for _, subdir := range subdirs {
+		subdir = strings.TrimSpace(subdir)
+		if subdir == "" {
+			return fmt.Errorf("sparse checkout requires non-empty subdir")
+		}
+		paths = append(paths, subdir)
+	}
+	if len(paths) == 0 {
 		return fmt.Errorf("sparse checkout requires non-empty subdir")
 	}
 
@@ -66,7 +79,7 @@ func sparseCloneSubdir(url, subdir, destPath, branch string, extraEnv []string, 
 		return err
 	}
 
-	if err := runGitCommandWithProgress([]string{"sparse-checkout", "set", subdir}, destPath, extraEnv, nil); err != nil {
+	if err := runGitCommandWithProgress(append([]string{"sparse-checkout", "set"}, paths...), destPath, extraEnv, nil); err != nil {
 		return err
 	}
 

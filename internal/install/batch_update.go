@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"skillshare/internal/utils"
@@ -44,7 +45,7 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 	source.Branch = branch
 
 	// 1. Discover skills from the repo (clones once)
-	discovery, err := DiscoverFromGitWithProgress(source, opts.OnProgress)
+	discovery, err := discoverForBatchUpdate(source, skillTargets, opts.OnProgress)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +136,37 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 	}
 
 	return result, nil
+}
+
+// discoverForBatchUpdate clones only the requested skill subdirs when it can.
+// A root skill ("" or ".") needs the whole tree, so it keeps the full clone.
+func discoverForBatchUpdate(source *Source, skillTargets map[string]string, onProgress ProgressCallback) (*DiscoveryResult, error) {
+	if subdirs, ok := sparseBatchSubdirs(skillTargets); ok && gitSupportsSparseCheckout() {
+		sparseSource := *source
+		if discovery, err := discoverFromGitPaths(&sparseSource, subdirs, onProgress); err == nil {
+			*source = sparseSource
+			return discovery, nil
+		}
+	}
+	return DiscoverFromGitWithProgress(source, onProgress)
+}
+
+// sparseBatchSubdirs returns the cleaned, sorted subdirs of skillTargets, or
+// false when any target is the repo root or escapes it.
+func sparseBatchSubdirs(skillTargets map[string]string) ([]string, bool) {
+	if len(skillTargets) == 0 {
+		return nil, false
+	}
+	subdirs := make([]string, 0, len(skillTargets))
+	for subdir := range skillTargets {
+		cleaned := path.Clean(strings.ReplaceAll(strings.TrimSpace(subdir), "\\", "/"))
+		if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || path.IsAbs(cleaned) {
+			return nil, false
+		}
+		subdirs = append(subdirs, cleaned)
+	}
+	sort.Strings(subdirs)
+	return subdirs, true
 }
 
 // lookupSkillSubdir resolves a skill subdir that discovery filtered out by

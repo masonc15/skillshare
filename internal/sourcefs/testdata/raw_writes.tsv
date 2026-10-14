@@ -179,6 +179,7 @@ internal/install/install_apply.go	installFromGitSubdir	os.RemoveAll	tempRepoPath
 internal/install/install_apply.go	installFromGitSubdir	os.RemoveAll	tempRepoPath	tmp
 internal/install/install_apply.go	installFromLocal	os.MkdirAll	destPath	source-unmigrated
 internal/install/install_audit.go	cleanEmptyInstallParents	os.Remove	dir	agents
+internal/install/install_discovery.go	discoverFromGitPaths	os.MkdirTemp	""	tmp
 internal/install/install_discovery.go	discoverFromGitSubdirWithProgressImpl	os.MkdirTemp	""	tmp
 internal/install/install_discovery.go	discoverFromGitSubdirWithProgressImpl	os.RemoveAll	repoPath	tmp
 internal/install/install_discovery.go	discoverFromGitSubdirWithProgressImpl	os.RemoveAll	repoPath	tmp
