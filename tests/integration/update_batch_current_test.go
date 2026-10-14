@@ -94,3 +94,23 @@ func TestUpdateAll_UnchangedGroupedSkillsAreUpToDate(t *testing.T) {
 		t.Fatalf("--force: got %+v, want 2 updated", got)
 	}
 }
+
+// In a batch update, a repo that could not be fetched used to count its
+// skills as skipped without any message. (A single target already reports
+// the error through the verbose path.)
+func TestUpdateAll_WarnsWhenRepoFetchFails(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+	setupGlobalConfig(sb)
+	remote, _ := setupGroupedSkills(t, sb, "alpha", "beta")
+
+	if err := os.RemoveAll(remote); err != nil {
+		t.Fatal(err)
+	}
+
+	result := sb.RunCLI("update", "--all", "--skip-audit")
+	result.AssertSuccess(t)
+	result.AssertAnyOutputContains(t, "Could not fetch")
+	result.AssertAnyOutputContains(t, "grouped.git")
+	result.AssertAnyOutputContains(t, "2 skipped")
+}
