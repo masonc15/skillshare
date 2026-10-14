@@ -1007,6 +1007,28 @@ func GetRemoteRefHashWithEnv(repoURL, branch string, extraEnv []string) (string,
 	return hash, err
 }
 
+// GetRemoteRefCommitWithAuth returns the full commit SHA that branch (or the
+// remote HEAD when branch is empty) points at, using HTTPS token auth. A full
+// SHA is returned as-is: a pinned commit never moves. Abbreviated SHAs are
+// rejected because they cannot be compared against a recorded full SHA.
+func GetRemoteRefCommitWithAuth(repoURL, branch string) (string, error) {
+	if install.IsCommitSHA(branch) {
+		if len(branch) == 40 {
+			return strings.ToLower(branch), nil
+		}
+		return "", fmt.Errorf("abbreviated commit %q cannot be resolved remotely", branch)
+	}
+	args := []string{repoURL, "HEAD"}
+	if branch != "" {
+		args = []string{repoURL, "refs/heads/" + branch, "refs/tags/" + branch, "refs/tags/" + branch + "^{}"}
+	}
+	out, err := runRemoteLsRemote(args, install.AuthEnvForURL(repoURL))
+	if err != nil {
+		return "", err
+	}
+	return parseRemoteFullHash(out, branch)
+}
+
 func runRemoteLsRemote(args []string, extraEnv []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), remoteHashTimeout)
 	defer cancel()
@@ -1036,6 +1058,15 @@ func runRemoteLsRemote(args []string, extraEnv []string) (string, error) {
 // parseRemoteHash picks the commit from ls-remote output: a branch wins over a
 // same-named tag, and an annotated tag's peeled commit wins over the tag object.
 func parseRemoteHash(out, branch string) (string, error) {
+	hash, err := parseRemoteFullHash(out, branch)
+	if err != nil {
+		return "", err
+	}
+	return abbrevHash(hash), nil
+}
+
+// parseRemoteFullHash is parseRemoteHash without abbreviation.
+func parseRemoteFullHash(out, branch string) (string, error) {
 	var hash string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		fields := strings.Fields(line)
@@ -1048,7 +1079,7 @@ func parseRemoteHash(out, branch string) (string, error) {
 		}
 		switch {
 		case strings.HasPrefix(ref, "refs/heads/"):
-			return abbrevHash(fields[0]), nil
+			return fields[0], nil
 		case strings.HasSuffix(ref, "^{}"), hash == "":
 			hash = fields[0]
 		}
@@ -1059,7 +1090,7 @@ func parseRemoteHash(out, branch string) (string, error) {
 		}
 		return "", fmt.Errorf("no HEAD ref found")
 	}
-	return abbrevHash(hash), nil
+	return hash, nil
 }
 
 func abbrevHash(hash string) string {

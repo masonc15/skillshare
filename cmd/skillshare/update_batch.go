@@ -182,7 +182,14 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 
 		// Fetches run concurrently; results are applied here one at a time, so
 		// source-dir and metadata writes stay sequential.
-		for job := range fetchRepoGroups(jobs, uc.makeInstallOpts()) {
+		for job := range fetchRepoGroups(jobs, uc.makeInstallOpts(), !uc.opts.force) {
+			if job.upToDate {
+				for range job.skillTargetMap {
+					result.upToDate++
+					progressBar.Increment()
+				}
+				continue
+			}
 			if job.err != nil {
 				fetchFailedEntries = append(fetchFailedEntries, batchBlockedEntry{name: job.repoURL, errMsg: job.err.Error()})
 				for range job.targets {
