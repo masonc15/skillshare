@@ -153,6 +153,7 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 			progressBar.SetHeader(ui.FormatPhaseHeader(phaseCurrent, phaseTotal, "Updating %s from %s...", plural(groupedCount, "grouped skill"), plural(len(repoGroups), "repo")))
 		}
 	}
+	var fetchFailedEntries []batchBlockedEntry
 	groupKeys := make([]string, 0, len(repoGroups))
 	for k := range repoGroups {
 		groupKeys = append(groupKeys, k)
@@ -183,6 +184,7 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 		// source-dir and metadata writes stay sequential.
 		for job := range fetchRepoGroups(jobs, uc.makeInstallOpts()) {
 			if job.err != nil {
+				fetchFailedEntries = append(fetchFailedEntries, batchBlockedEntry{name: job.repoURL, errMsg: job.err.Error()})
 				for range job.targets {
 					result.skipped++
 					progressBar.Increment()
@@ -293,6 +295,9 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 	// Render results
 	if !uc.opts.dryRun {
 		displayUpdateBlockedSection(blockedEntries)
+		for _, e := range fetchFailedEntries {
+			ui.Warning("Could not fetch %s: %s", e.name, e.errMsg)
+		}
 		for _, e := range statusFailedEntries {
 			ui.Error("%s: %s", e.name, e.errMsg)
 		}
