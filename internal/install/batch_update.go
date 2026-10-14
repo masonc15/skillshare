@@ -78,6 +78,9 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 	}
 	totalSkills := len(skillTargets)
 	processedSkills := 0
+	// Store entries skipped on a tree-hash match whose version lags HEAD; they
+	// are refreshed with one load and save after the loop.
+	var staleVersionKeys []string
 
 	// 2. Install/Update each requested skill from the discovered repo
 	for repoSubdir, destPath := range skillTargets {
@@ -107,9 +110,15 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 			installed := installedSkillMeta(store, opts.SourceDir, destPath)
 			if isSkillCurrentAtRepoState(installed, repoSubdir, result.CommitHash, repoPath, treeHashCache) {
 				// Best-effort metadata refresh:
-				// when skipping by tree-hash match on a moved HEAD, keep meta.Version
+				// when skipping by tree-hash match on a moved HEAD, keep the version
 				// aligned to latest commit to avoid stale version reporting.
-				_ = refreshSkillMetaVersionIfNeeded(opts.SourceDir, destPath, installed, result.CommitHash)
+				if strings.TrimSpace(installed.Version) != strings.TrimSpace(result.CommitHash) {
+					if installed.storeKey == "" {
+						_ = refreshSkillMetaVersionIfNeeded(destPath, result.CommitHash)
+					} else {
+						staleVersionKeys = append(staleVersionKeys, installed.storeKey)
+					}
+				}
 				result.Current[repoSubdir] = true
 				processedSkills++
 				emitBatchSkillProgress(opts.OnProgress, processedSkills, totalSkills, repoSubdir)
@@ -133,6 +142,7 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 		emitBatchSkillProgress(opts.OnProgress, processedSkills, totalSkills, repoSubdir)
 	}
 
+	_ = refreshStoreVersions(opts.SourceDir, staleVersionKeys, result.CommitHash)
 	return result, nil
 }
 
@@ -244,38 +254,46 @@ func emitBatchSkillProgress(onProgress ProgressCallback, done, total int, repoSu
 	onProgress(fmt.Sprintf("%s%d/%d %s", BatchUpdateProgressPrefix, done, total, label))
 }
 
-// refreshSkillMetaVersionIfNeeded records commitHash as the version of a
-// skill skipped as current, so a tree-hash match on a moved HEAD does not
-// leave a stale version behind. The full commit stays: the skill's files did
-// not move, and a project lock pin follows that field.
-func refreshSkillMetaVersionIfNeeded(sourceDir, destPath string, installed *installedMeta, commitHash string) error {
+// refreshSkillMetaVersionIfNeeded records commitHash as the version in the
+// legacy sidecar of a skill skipped as current.
+func refreshSkillMetaVersionIfNeeded(destPath, commitHash string) error {
 	commitHash = strings.TrimSpace(commitHash)
-	if commitHash == "" || installed == nil {
+	if commitHash == "" {
 		return nil
 	}
-	if installed.storeKey == "" {
-		meta, err := ReadMeta(destPath)
-		if err != nil || meta == nil {
-			return err
-		}
-		if strings.TrimSpace(meta.Version) == commitHash {
-			return nil
-		}
-		meta.Version = commitHash
-		return WriteMeta(destPath, meta)
+	meta, err := ReadMeta(destPath)
+	if err != nil || meta == nil {
+		return err
 	}
+	if strings.TrimSpace(meta.Version) == commitHash {
+		return nil
+	}
+	meta.Version = commitHash
+	return WriteMeta(destPath, meta)
+}
 
+// refreshStoreVersions records commitHash as the version of the store entries
+// in keys, skills skipped on a tree-hash match after HEAD moved. The full
+// commit stays: their files did not move, and a project lock pin follows that
+// field.
+func refreshStoreVersions(sourceDir string, keys []string, commitHash string) error {
+	commitHash = strings.TrimSpace(commitHash)
+	if sourceDir == "" || commitHash == "" || len(keys) == 0 {
+		return nil
+	}
 	store, err := loadMetadataFile(sourceDir)
 	if err != nil {
 		return err
 	}
-	entry := store.Get(installed.storeKey)
-	if entry == nil {
+	changed := false
+	for _, key := range keys {
+		if entry := store.Get(key); entry != nil && strings.TrimSpace(entry.Version) != commitHash {
+			entry.Version = commitHash
+			changed = true
+		}
+	}
+	if !changed {
 		return nil
 	}
-	if strings.TrimSpace(entry.Version) == commitHash {
-		return nil
-	}
-	entry.Version = commitHash
 	return store.Save(sourceDir)
 }

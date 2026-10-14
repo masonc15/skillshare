@@ -124,6 +124,17 @@ func TestUpdateProject_UnchangedGroupedSkillsAreUpToDate(t *testing.T) {
 	if got.Updated != 0 || got.UpToDate != 2 {
 		t.Fatalf("project mode, unchanged upstream: got %+v, want 0 updated and 2 up to date", got)
 	}
+
+	// Several skills named in project mode take the same batch path.
+	result = sb.RunCLIInDir(projectRoot, "update", "alpha", "beta", "-p", "--skip-audit", "--json")
+	result.AssertSuccess(t)
+	got = updateCounts{}
+	if err := json.Unmarshal([]byte(result.Stdout), &got); err != nil {
+		t.Fatalf("parse update JSON: %v\n%s", err, result.Stdout)
+	}
+	if got.Updated != 0 || got.UpToDate != 2 {
+		t.Fatalf("project mode, named skills: got %+v, want 0 updated and 2 up to date", got)
+	}
 }
 
 // A project lock pins each skill's commit. An upstream commit that leaves a

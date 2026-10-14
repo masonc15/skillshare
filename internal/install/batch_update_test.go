@@ -205,7 +205,7 @@ func TestRefreshSkillMetaVersionIfNeeded(t *testing.T) {
 		t.Fatalf("WriteMeta failed: %v", err)
 	}
 
-	if err := refreshSkillMetaVersionIfNeeded("", dest, installedSkillMeta(nil, "", dest), "new-commit"); err != nil {
+	if err := refreshSkillMetaVersionIfNeeded(dest, "new-commit"); err != nil {
 		t.Fatalf("refreshSkillMetaVersionIfNeeded failed: %v", err)
 	}
 

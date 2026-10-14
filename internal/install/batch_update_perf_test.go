@@ -77,28 +77,32 @@ func TestUpdateSkillsFromRepo_SkipsSkillCurrentInStore(t *testing.T) {
 	}
 }
 
-// When HEAD moves but the skill's tree does not, the skip refreshes the
+// When HEAD moves but the skills' trees do not, the skip refreshes each
 // recorded version in the store and keeps the full commit, which a project
 // lock pin follows.
 func TestUpdateSkillsFromRepo_TreeMatchRefreshesStoreVersion(t *testing.T) {
 	repo := initTestRepo(t)
-	writeSkill(t, repo, "skills/my-skill", "# v1")
+	writeSkill(t, repo, "skills/alpha", "# alpha v1")
+	writeSkill(t, repo, "skills/beta", "# beta v1")
 
 	sourceDir := t.TempDir()
-	dest := filepath.Join(sourceDir, "my-skill")
-	targets := map[string]string{"skills/my-skill": dest}
+	targets := map[string]string{
+		"skills/alpha": filepath.Join(sourceDir, "alpha"),
+		"skills/beta":  filepath.Join(sourceDir, "beta"),
+	}
 	opts := InstallOptions{Update: true, Force: true, SkipAudit: true, SourceDir: sourceDir}
 	if _, err := UpdateSkillsFromRepo("file://"+repo, "", targets, opts); err != nil {
 		t.Fatal(err)
 	}
-
 	before, err := LoadMetadata(sourceDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	installedCommit := before.Get("my-skill").Commit
-	if installedCommit == "" {
-		t.Fatal("install recorded no commit")
+	installedCommit := map[string]string{}
+	for _, name := range []string{"alpha", "beta"} {
+		if installedCommit[name] = before.Get(name).Commit; installedCommit[name] == "" {
+			t.Fatalf("%s: install recorded no commit", name)
+		}
 	}
 
 	writeSkill(t, repo, "skills/other", "# unrelated")
@@ -107,20 +111,22 @@ func TestUpdateSkillsFromRepo_TreeMatchRefreshesStoreVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Current["skills/my-skill"] {
-		t.Fatalf("expected tree-hash match to skip, results=%v errors=%v", result.Results, result.Errors)
-	}
-	store, err := LoadMetadata(sourceDir)
+	after, err := LoadMetadata(sourceDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := store.Get("my-skill")
-	if entry == nil {
-		t.Fatal("missing store entry")
-	}
-	if entry.Commit != installedCommit || entry.Version != result.CommitHash {
-		t.Fatalf("store refresh: commit=%q version=%q, want commit=%q version=%q",
-			entry.Commit, entry.Version, installedCommit, result.CommitHash)
+	for _, name := range []string{"alpha", "beta"} {
+		if !result.Current["skills/"+name] {
+			t.Fatalf("%s: expected tree-hash match to skip, results=%v errors=%v", name, result.Results, result.Errors)
+		}
+		entry := after.Get(name)
+		if entry == nil {
+			t.Fatalf("%s: missing store entry", name)
+		}
+		if entry.Commit != installedCommit[name] || entry.Version != result.CommitHash {
+			t.Fatalf("%s store refresh: commit=%q version=%q, want commit=%q version=%q",
+				name, entry.Commit, entry.Version, installedCommit[name], result.CommitHash)
+		}
 	}
 }
 
@@ -139,7 +145,7 @@ func TestInstalledSkillMeta_LegacyGroupedKey(t *testing.T) {
 	if installed == nil || installed.storeKey != "my-skill" || installed.TreeHash != "tree" {
 		t.Fatalf("legacy key lookup: got %+v", installed)
 	}
-	if err := refreshSkillMetaVersionIfNeeded(sourceDir, dest, installed, "new"); err != nil {
+	if err := refreshStoreVersions(sourceDir, []string{installed.storeKey}, "new"); err != nil {
 		t.Fatal(err)
 	}
 	after, err := LoadMetadata(sourceDir)
