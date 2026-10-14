@@ -20,6 +20,9 @@ type BatchUpdateResult struct {
 	CommitHash string
 	Results    map[string]*InstallResult // map[skillRelPath]result
 	Errors     map[string]error          // map[skillRelPath]error
+	// Current lists subdirs skipped because the installed copy already matches
+	// the fetched repo state.
+	Current map[string]bool
 }
 
 // UpdateSkillsFromRepo updates multiple skills that belong to the same git repository.
@@ -52,6 +55,7 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 		CommitHash: discovery.CommitHash,
 		Results:    make(map[string]*InstallResult),
 		Errors:     make(map[string]error),
+		Current:    make(map[string]bool),
 	}
 	repoPath := filepath.Join(discovery.RepoPath, "repo")
 	if result.CommitHash == "" {
@@ -66,6 +70,13 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 		discoveryMap[s.Path] = s
 	}
 	treeHashCache := make(map[string]string)
+	// Read-only snapshot: each skill's own entry is read before its install
+	// rewrites the store, so later writes cannot invalidate it.
+	var store *MetadataStore
+	if opts.SourceDir != "" {
+		store, _ = loadMetadataFile(opts.SourceDir)
+	}
+	fullHash, _ := getGitFullHash(repoPath)
 	totalSkills := len(skillTargets)
 	processedSkills := 0
 
@@ -92,15 +103,19 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 		// Fast path for update --all on huge inventories:
 		// if installed metadata already points at this exact repo commit/tree,
 		// skip reinstall/copy entirely.
-		if opts.Update && !opts.DryRun &&
-			isSkillCurrentAtRepoState(destPath, repoSubdir, result.CommitHash, repoPath, treeHashCache) {
-			// Best-effort metadata refresh:
-			// when skipping by tree-hash match on a moved HEAD, keep meta.Version
-			// aligned to latest commit to avoid stale version reporting.
-			_ = refreshSkillMetaVersionIfNeeded(destPath, result.CommitHash)
-			processedSkills++
-			emitBatchSkillProgress(opts.OnProgress, processedSkills, totalSkills, repoSubdir)
-			continue
+		// Metadata outlives a deleted install, so require the skill on disk.
+		if opts.Update && !opts.DryRun && !opts.Reinstall && skillFileExists(destPath) {
+			installed := installedSkillMeta(store, opts.SourceDir, destPath)
+			if isSkillCurrentAtRepoState(installed, repoSubdir, result.CommitHash, repoPath, treeHashCache) {
+				// Best-effort metadata refresh:
+				// when skipping by tree-hash match on a moved HEAD, keep meta.Version
+				// aligned to latest commit to avoid stale version reporting.
+				_ = refreshSkillMetaVersionIfNeeded(opts.SourceDir, destPath, installed, result.CommitHash, fullHash)
+				result.Current[repoSubdir] = true
+				processedSkills++
+				emitBatchSkillProgress(opts.OnProgress, processedSkills, totalSkills, repoSubdir)
+				continue
+			}
 		}
 
 		// Use a local copy of options to avoid side effects
@@ -147,14 +162,49 @@ func lookupSkillSubdir(repoPath, subdir string) (SkillInfo, bool) {
 	}, true
 }
 
-// isSkillCurrentAtRepoState returns true when installed metadata already
-// matches the latest fetched repo state for this skill path.
-func isSkillCurrentAtRepoState(destPath, repoSubdir, commitHash, repoPath string, treeHashCache map[string]string) bool {
-	if commitHash == "" || repoPath == "" {
-		return false
+// skillFileExists reports whether dir holds an installed SKILL.md.
+func skillFileExists(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, "SKILL.md"))
+	return err == nil && !info.IsDir()
+}
+
+// installedMeta is the recorded state of an installed skill, read from the
+// centralized store or, for installs that predate it, the legacy sidecar.
+type installedMeta struct {
+	Version  string
+	TreeHash string
+	storeKey string // store entry key; empty when read from a sidecar
+}
+
+// installedSkillMeta looks up destPath's metadata. store may be nil.
+func installedSkillMeta(store *MetadataStore, sourceDir, destPath string) *installedMeta {
+	if store != nil && sourceDir != "" {
+		if rel, err := filepath.Rel(sourceDir, destPath); err == nil {
+			rel = filepath.ToSlash(rel)
+			if entry := store.GetByPath(rel); entry != nil {
+				return &installedMeta{Version: entry.Version, TreeHash: entry.TreeHash, storeKey: storeKeyFor(store, rel, entry)}
+			}
+		}
 	}
 	meta, err := ReadMeta(destPath)
 	if err != nil || meta == nil {
+		return nil
+	}
+	return &installedMeta{Version: meta.Version, TreeHash: meta.TreeHash}
+}
+
+// storeKeyFor returns the key GetByPath(rel) resolved entry under.
+func storeKeyFor(store *MetadataStore, rel string, entry *MetadataEntry) string {
+	if store.Entries[rel] == entry {
+		return rel
+	}
+	return path.Base(rel)
+}
+
+// isSkillCurrentAtRepoState returns true when installed metadata already
+// matches the latest fetched repo state for this skill path.
+func isSkillCurrentAtRepoState(meta *installedMeta, repoSubdir, commitHash, repoPath string, treeHashCache map[string]string) bool {
+	if commitHash == "" || repoPath == "" || meta == nil {
 		return false
 	}
 
@@ -195,18 +245,40 @@ func emitBatchSkillProgress(onProgress ProgressCallback, done, total int, repoSu
 	onProgress(fmt.Sprintf("%s%d/%d %s", BatchUpdateProgressPrefix, done, total, label))
 }
 
-func refreshSkillMetaVersionIfNeeded(destPath, commitHash string) error {
+// refreshSkillMetaVersionIfNeeded records commitHash (and fullHash, when
+// known) on a skill skipped as current, so a tree-hash match on a moved HEAD
+// does not leave a stale version behind.
+func refreshSkillMetaVersionIfNeeded(sourceDir, destPath string, installed *installedMeta, commitHash, fullHash string) error {
 	commitHash = strings.TrimSpace(commitHash)
-	if commitHash == "" {
+	if commitHash == "" || installed == nil {
 		return nil
 	}
-	meta, err := ReadMeta(destPath)
-	if err != nil || meta == nil {
+	if installed.storeKey == "" {
+		meta, err := ReadMeta(destPath)
+		if err != nil || meta == nil {
+			return err
+		}
+		if strings.TrimSpace(meta.Version) == commitHash {
+			return nil
+		}
+		meta.Version = commitHash
+		return WriteMeta(destPath, meta)
+	}
+
+	store, err := loadMetadataFile(sourceDir)
+	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(meta.Version) == commitHash {
+	entry := store.Get(installed.storeKey)
+	if entry == nil {
 		return nil
 	}
-	meta.Version = commitHash
-	return WriteMeta(destPath, meta)
+	if strings.TrimSpace(entry.Version) == commitHash && (fullHash == "" || entry.Commit == fullHash) {
+		return nil
+	}
+	entry.Version = commitHash
+	if fullHash != "" {
+		entry.Commit = fullHash
+	}
+	return store.Save(sourceDir)
 }

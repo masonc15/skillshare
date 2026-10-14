@@ -34,7 +34,7 @@ func TestIsSkillCurrentAtRepoState_RootSkillCommitMatch(t *testing.T) {
 		t.Fatalf("WriteMeta failed: %v", err)
 	}
 
-	if !isSkillCurrentAtRepoState(dest, ".", commit, repo, map[string]string{}) {
+	if !isSkillCurrentAtRepoState(installedSkillMeta(nil, "", dest), ".", commit, repo, map[string]string{}) {
 		t.Fatal("expected root skill to be up-to-date when commit matches")
 	}
 }
@@ -72,7 +72,7 @@ func TestIsSkillCurrentAtRepoState_SubdirTreeHashMatch(t *testing.T) {
 		t.Fatalf("WriteMeta failed: %v", err)
 	}
 
-	if !isSkillCurrentAtRepoState(dest, "skills/my-skill", commit, repo, map[string]string{}) {
+	if !isSkillCurrentAtRepoState(installedSkillMeta(nil, "", dest), "skills/my-skill", commit, repo, map[string]string{}) {
 		t.Fatal("expected subdir skill to be up-to-date when commit/tree hash match")
 	}
 }
@@ -105,7 +105,7 @@ func TestIsSkillCurrentAtRepoState_SubdirMissingTreeHashCommitMatchSkips(t *test
 		t.Fatalf("WriteMeta failed: %v", err)
 	}
 
-	if !isSkillCurrentAtRepoState(dest, "skills/my-skill", commit, repo, map[string]string{}) {
+	if !isSkillCurrentAtRepoState(installedSkillMeta(nil, "", dest), "skills/my-skill", commit, repo, map[string]string{}) {
 		t.Fatal("expected subdir skill without tree hash to be up-to-date when commit matches")
 	}
 }
@@ -133,7 +133,7 @@ func TestIsSkillCurrentAtRepoState_CommitMismatchDoesNotSkip(t *testing.T) {
 		t.Fatalf("WriteMeta failed: %v", err)
 	}
 
-	if isSkillCurrentAtRepoState(dest, ".", commit, repo, map[string]string{}) {
+	if isSkillCurrentAtRepoState(installedSkillMeta(nil, "", dest), ".", commit, repo, map[string]string{}) {
 		t.Fatal("expected commit mismatch to require reinstall")
 	}
 }
@@ -186,7 +186,7 @@ func TestIsSkillCurrentAtRepoState_SubdirTreeHashMatchSkipsOnCommitMismatch(t *t
 		t.Fatalf("WriteMeta failed: %v", err)
 	}
 
-	if !isSkillCurrentAtRepoState(dest, "skills/my-skill", newCommit, repo, map[string]string{}) {
+	if !isSkillCurrentAtRepoState(installedSkillMeta(nil, "", dest), "skills/my-skill", newCommit, repo, map[string]string{}) {
 		t.Fatal("expected subdir skill to skip when tree hash matches despite commit mismatch")
 	}
 }
@@ -205,7 +205,7 @@ func TestRefreshSkillMetaVersionIfNeeded(t *testing.T) {
 		t.Fatalf("WriteMeta failed: %v", err)
 	}
 
-	if err := refreshSkillMetaVersionIfNeeded(dest, "new-commit"); err != nil {
+	if err := refreshSkillMetaVersionIfNeeded("", dest, installedSkillMeta(nil, "", dest), "new-commit", ""); err != nil {
 		t.Fatalf("refreshSkillMetaVersionIfNeeded failed: %v", err)
 	}
 
