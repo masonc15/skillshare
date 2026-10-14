@@ -193,7 +193,7 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 
 		batchResult, err := install.UpdateSkillsFromRepo(repoURL, branch, skillTargetMap, batchOpts)
 		if err != nil {
-			fetchFailedEntries = append(fetchFailedEntries, batchBlockedEntry{name: repoURL, errMsg: err.Error()})
+			fetchFailedEntries = append(fetchFailedEntries, fetchFailedEntry(repoURL, err))
 			for _, t := range groupTargets {
 				progressBar.UpdateTitle(fmt.Sprintf("Failed %s: %v", t.name, err))
 				result.skipped++
@@ -408,4 +408,26 @@ func pruneRegistry(prunedNames []string, uc *updateContext) {
 			ui.Warning("Failed to update metadata after prune: %v", saveErr)
 		}
 	}
+}
+
+// fetchFailedEntry describes a repo group that could not be fetched. The
+// stored repo URL may embed a token as userinfo, and git's error text can echo
+// that URL, so both are redacted before they reach the terminal.
+func fetchFailedEntry(repoURL string, err error) batchBlockedEntry {
+	msg := err.Error()
+	if scheme, rest, ok := strings.Cut(repoURL, "://"); ok && strings.HasPrefix(strings.ToLower(scheme), "http") {
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			userinfo := rest[:at]
+			secrets := []string{userinfo}
+			if _, password, ok := strings.Cut(userinfo, ":"); ok {
+				secrets = append(secrets, password)
+			}
+			for _, secret := range secrets {
+				if secret != "" {
+					msg = strings.ReplaceAll(msg, secret, "[REDACTED]")
+				}
+			}
+		}
+	}
+	return batchBlockedEntry{name: install.DisplayURL(repoURL), errMsg: msg}
 }

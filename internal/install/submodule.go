@@ -22,16 +22,16 @@ type gitlink struct {
 func (l gitlink) String() string {
 	s := fmt.Sprintf("%q (pinned at %s", l.Path, shortHash(l.Commit))
 	if l.URL != "" {
-		s += fmt.Sprintf(" from %q", displayURL(l.URL))
+		s += fmt.Sprintf(" from %q", DisplayURL(l.URL))
 	}
 	return s + ")"
 }
 
-// displayURL drops userinfo, query and fragment from a .gitmodules URL, which
-// may carry a token, before it reaches terminal output or an API error. git
+// DisplayURL drops userinfo, query and fragment from a git URL, which may
+// carry a token, before it reaches terminal output or an API error. git
 // accepts any text there, so this fails closed on the raw string: everything
 // before the last "@" goes, keeping only a well-formed "scheme://" prefix.
-func displayURL(raw string) string {
+func DisplayURL(raw string) string {
 	// Userinfo first: a "?" or "#" inside it must not hide the "@".
 	if at := strings.LastIndex(raw, "@"); at >= 0 {
 		if scheme, _, ok := strings.Cut(raw[:at], "://"); ok {
