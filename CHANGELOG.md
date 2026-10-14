@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.25.11](https://github.com/masonc15/skillshare/compare/v0.25.11...v0.25.11) (2026-10-14)
+## [0.25.11] - 2026-10-14
 
 
 * **api:** cover skillsSharedWith in the targets list ([eabe5fb](https://github.com/masonc15/skillshare/commit/eabe5fbc10f278397f3caba62b4470f29e9a9d44))
