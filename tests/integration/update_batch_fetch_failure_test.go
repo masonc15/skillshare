@@ -51,43 +51,58 @@ func TestUpdateAll_WarnsWhenRepoFetchFails(t *testing.T) {
 	result.AssertAnyOutputContains(t, "2 skipped")
 }
 
-// The stored repo URL can carry a token as userinfo. The warning must name the
-// repo without it, and must not echo it through git's error text either.
+// The stored repo URL can carry a token as userinfo or in its query. The
+// warning must name the repo without it, must not echo it through git's error
+// text, and must keep an "@" that is part of the path.
 func TestUpdateAll_FetchWarningRedactsURLCredentials(t *testing.T) {
-	sb := testutil.NewSandbox(t)
-	defer sb.Cleanup()
-	setupGlobalConfig(sb)
-
-	// Nothing listens on port 1, so the clone fails right away.
-	repoURL := "https://someone:s3cret-token@127.0.0.1:1/owner/skills.git"
-	store, err := install.LoadMetadata(sb.SourcePath)
-	if err != nil {
-		t.Fatal(err)
+	// Nothing listens on port 1, so every clone fails right away.
+	tests := []struct {
+		name, repoURL, want string
+		leaks               []string
+	}{
+		{"userinfo", "https://someone:s3cret-token@127.0.0.1:1/owner/skills.git", "https://127.0.0.1:1/owner/skills.git", []string{"s3cret-token", "someone:"}},
+		{"query token", "https://127.0.0.1:1/owner/skills.git?token=s3cret-token", "https://127.0.0.1:1/owner/skills.git", []string{"s3cret-token"}},
+		{"at sign in path", "https://127.0.0.1:1/team@archive/skills.git", "https://127.0.0.1:1/team@archive/skills.git", nil},
 	}
-	for _, name := range []string{"alpha", "beta"} {
-		dir := filepath.Join(sb.SourcePath, name)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		body := "---\nname: " + name + "\n---\n# " + name + "\n"
-		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0644); err != nil {
-			t.Fatal(err)
-		}
-		store.Set(name, &install.MetadataEntry{
-			Source:  repoURL + "//skills/" + name,
-			Type:    "git",
-			RepoURL: repoURL,
-			Subdir:  "skills/" + name,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sb := testutil.NewSandbox(t)
+			defer sb.Cleanup()
+			setupGlobalConfig(sb)
+
+			store, err := install.LoadMetadata(sb.SourcePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"alpha", "beta"} {
+				dir := filepath.Join(sb.SourcePath, name)
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				body := "---\nname: " + name + "\n---\n# " + name + "\n"
+				if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0644); err != nil {
+					t.Fatal(err)
+				}
+				store.Set(name, &install.MetadataEntry{
+					Source:  tt.repoURL + "//skills/" + name,
+					Type:    "git",
+					RepoURL: tt.repoURL,
+					Subdir:  "skills/" + name,
+				})
+			}
+			if err := store.Save(sb.SourcePath); err != nil {
+				t.Fatal(err)
+			}
+
+			result := sb.RunCLI("update", "--all", "--skip-audit")
+			result.AssertSuccess(t)
+			result.AssertAnyOutputContains(t, "Could not fetch "+tt.want+":")
+			out := result.Stdout + result.Stderr
+			for _, leak := range tt.leaks {
+				if strings.Contains(out, leak) {
+					t.Fatalf("fetch warning leaked %q:\n%s", leak, out)
+				}
+			}
 		})
-	}
-	if err := store.Save(sb.SourcePath); err != nil {
-		t.Fatal(err)
-	}
-
-	result := sb.RunCLI("update", "--all", "--skip-audit")
-	result.AssertSuccess(t)
-	result.AssertAnyOutputContains(t, "Could not fetch https://127.0.0.1:1/owner/skills.git")
-	if out := result.Stdout + result.Stderr; strings.Contains(out, "s3cret-token") || strings.Contains(out, "someone:") {
-		t.Fatalf("fetch warning leaked URL credentials:\n%s", out)
 	}
 }

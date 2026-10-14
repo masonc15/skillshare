@@ -410,24 +410,49 @@ func pruneRegistry(prunedNames []string, uc *updateContext) {
 	}
 }
 
-// fetchFailedEntry describes a repo group that could not be fetched. The
-// stored repo URL may embed a token as userinfo, and git's error text can echo
-// that URL, so both are redacted before they reach the terminal.
+// fetchFailedEntry describes a repo group that could not be fetched. A stored
+// HTTPS repo URL can carry a token as userinfo or in its query, and git's error
+// text echoes the URL, so both are redacted before they reach the terminal.
 func fetchFailedEntry(repoURL string, err error) batchBlockedEntry {
-	msg := err.Error()
-	if scheme, rest, ok := strings.Cut(repoURL, "://"); ok && strings.HasPrefix(strings.ToLower(scheme), "http") {
-		if at := strings.LastIndex(rest, "@"); at >= 0 {
-			userinfo := rest[:at]
-			secrets := []string{userinfo}
-			if _, password, ok := strings.Cut(userinfo, ":"); ok {
-				secrets = append(secrets, password)
-			}
-			for _, secret := range secrets {
-				if secret != "" {
-					msg = strings.ReplaceAll(msg, secret, "[REDACTED]")
-				}
-			}
+	name, redact := redactRepoURL(repoURL)
+	return batchBlockedEntry{name: name, errMsg: redact.Replace(err.Error())}
+}
+
+// redactRepoURL returns an http(s) repoURL without its userinfo, query and
+// fragment, plus a replacer that removes those parts from text echoing the
+// URL. Userinfo is taken up to the last "@" before the first "/", so a "?" or
+// "#" inside a password cannot hide it while an "@" in the path stays. Other
+// URLs (file, ssh, scp-style, local paths) come back unchanged.
+func redactRepoURL(repoURL string) (string, *strings.Replacer) {
+	scheme, rest, ok := strings.Cut(repoURL, "://")
+	if !ok || !strings.EqualFold(scheme, "http") && !strings.EqualFold(scheme, "https") {
+		return repoURL, strings.NewReplacer()
+	}
+	var pairs []string
+	host, path := rest, ""
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		host, path = rest[:i], rest[i:]
+	}
+	if at := strings.LastIndex(host, "@"); at > 0 {
+		userinfo := host[:at]
+		host = host[at+1:]
+		pairs = append(pairs, userinfo+"@", "")
+		if _, password, ok := strings.Cut(userinfo, ":"); ok && password != "" {
+			pairs = append(pairs, password, "[REDACTED]")
 		}
 	}
-	return batchBlockedEntry{name: install.DisplayURL(repoURL), errMsg: msg}
+	rest = host + path
+	if i := strings.IndexByte(rest, '#'); i >= 0 {
+		if len(rest)-i > 1 {
+			pairs = append(pairs, rest[i:], "")
+		}
+		rest = rest[:i]
+	}
+	if i := strings.IndexByte(rest, '?'); i >= 0 {
+		if query := rest[i+1:]; query != "" {
+			pairs = append(pairs, rest[i:], "", query, "[REDACTED]")
+		}
+		rest = rest[:i]
+	}
+	return scheme + "://" + rest, strings.NewReplacer(pairs...)
 }
