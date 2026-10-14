@@ -34,6 +34,7 @@ type updateOptions struct {
 // updateJSONOutput is the JSON representation for update --json output.
 type updateJSONOutput struct {
 	Updated             int                         `json:"updated"`
+	UpToDate            int                         `json:"up_to_date,omitempty"`
 	Skipped             int                         `json:"skipped"`
 	SecurityFailed      int                         `json:"security_failed"`
 	Pruned              int                         `json:"pruned"`
@@ -437,6 +438,7 @@ func updateOutputJSON(result *updateResult, dryRun bool, start time.Time, update
 	}
 	if result != nil {
 		output.Updated = result.updated
+		output.UpToDate = result.upToDate
 		output.Skipped = result.skipped
 		output.SecurityFailed = result.securityFailed
 		output.Pruned = result.pruned

@@ -12,6 +12,7 @@ import (
 // updateResult tracks the result of an update operation
 type updateResult struct {
 	updated             int
+	upToDate            int // grouped skills already at the upstream commit
 	skipped             int
 	securityFailed      int
 	pruned              int

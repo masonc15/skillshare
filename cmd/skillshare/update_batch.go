@@ -230,6 +230,8 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 				} else if res := batchResult.Results[subdir]; res != nil {
 					result.updated++
 					auditEntries = append(auditEntries, batchAuditEntryFromInstallResult(t.name, res))
+				} else if batchResult.Current[subdir] {
+					result.upToDate++
 				} else {
 					result.skipped++
 				}
@@ -307,6 +309,7 @@ func executeBatchUpdate(uc *updateContext, targets []updateTarget) (updateResult
 		displayUpdateAuditResults(auditEntries, uc.opts.auditVerbose)
 		ui.UpdateSummary(ui.UpdateStats{
 			Updated:        result.updated,
+			UpToDate:       result.upToDate,
 			Skipped:        result.skipped,
 			Pruned:         result.pruned,
 			SecurityFailed: result.securityFailed,

@@ -597,13 +597,15 @@ func UpdateSummary(stats UpdateStats) {
 	text := "Nothing to update"
 	if stats.Updated > 0 {
 		text = fmt.Sprintf("Updated %d", stats.Updated)
-	} else if stats.Skipped > 0 || stats.Pruned > 0 || stats.SecurityFailed > 0 {
+	} else if stats.UpToDate > 0 && stats.Skipped == 0 && stats.Pruned == 0 && stats.SecurityFailed == 0 {
+		text = "Everything up to date"
+	} else if stats.Skipped > 0 || stats.Pruned > 0 || stats.SecurityFailed > 0 || stats.UpToDate > 0 {
 		text = "Nothing updated"
 	}
 	for _, m := range []struct {
 		n     int
 		label string
-	}{{stats.Skipped, "skipped"}, {stats.Pruned, "pruned"}, {stats.SecurityFailed, "blocked by security audit"}} {
+	}{{stats.UpToDate, "up to date"}, {stats.Skipped, "skipped"}, {stats.Pruned, "pruned"}, {stats.SecurityFailed, "blocked by security audit"}} {
 		if m.n > 0 {
 			text += fmt.Sprintf(", %d %s", m.n, m.label)
 		}
@@ -619,6 +621,7 @@ func UpdateSummary(stats UpdateStats) {
 // UpdateStats holds statistics for update summary
 type UpdateStats struct {
 	Updated        int
+	UpToDate       int
 	Skipped        int
 	Pruned         int
 	SecurityFailed int
