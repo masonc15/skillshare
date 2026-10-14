@@ -76,7 +76,6 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 	if opts.SourceDir != "" {
 		store, _ = loadMetadataFile(opts.SourceDir)
 	}
-	fullHash, _ := getGitFullHash(repoPath)
 	totalSkills := len(skillTargets)
 	processedSkills := 0
 
@@ -110,7 +109,7 @@ func UpdateSkillsFromRepo(repoURL, branch string, skillTargets map[string]string
 				// Best-effort metadata refresh:
 				// when skipping by tree-hash match on a moved HEAD, keep meta.Version
 				// aligned to latest commit to avoid stale version reporting.
-				_ = refreshSkillMetaVersionIfNeeded(opts.SourceDir, destPath, installed, result.CommitHash, fullHash)
+				_ = refreshSkillMetaVersionIfNeeded(opts.SourceDir, destPath, installed, result.CommitHash)
 				result.Current[repoSubdir] = true
 				processedSkills++
 				emitBatchSkillProgress(opts.OnProgress, processedSkills, totalSkills, repoSubdir)
@@ -245,10 +244,11 @@ func emitBatchSkillProgress(onProgress ProgressCallback, done, total int, repoSu
 	onProgress(fmt.Sprintf("%s%d/%d %s", BatchUpdateProgressPrefix, done, total, label))
 }
 
-// refreshSkillMetaVersionIfNeeded records commitHash (and fullHash, when
-// known) on a skill skipped as current, so a tree-hash match on a moved HEAD
-// does not leave a stale version behind.
-func refreshSkillMetaVersionIfNeeded(sourceDir, destPath string, installed *installedMeta, commitHash, fullHash string) error {
+// refreshSkillMetaVersionIfNeeded records commitHash as the version of a
+// skill skipped as current, so a tree-hash match on a moved HEAD does not
+// leave a stale version behind. The full commit stays: the skill's files did
+// not move, and a project lock pin follows that field.
+func refreshSkillMetaVersionIfNeeded(sourceDir, destPath string, installed *installedMeta, commitHash string) error {
 	commitHash = strings.TrimSpace(commitHash)
 	if commitHash == "" || installed == nil {
 		return nil
@@ -273,12 +273,9 @@ func refreshSkillMetaVersionIfNeeded(sourceDir, destPath string, installed *inst
 	if entry == nil {
 		return nil
 	}
-	if strings.TrimSpace(entry.Version) == commitHash && (fullHash == "" || entry.Commit == fullHash) {
+	if strings.TrimSpace(entry.Version) == commitHash {
 		return nil
 	}
 	entry.Version = commitHash
-	if fullHash != "" {
-		entry.Commit = fullHash
-	}
 	return store.Save(sourceDir)
 }

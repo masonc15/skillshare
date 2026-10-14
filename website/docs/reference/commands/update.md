@@ -224,7 +224,7 @@ This updates:
 1. All tracked repositories (git pull)
 2. All skills with source metadata (reinstall when upstream changed)
 
-`update --all` and `update --group` group remote skills by repository and clone each repository once. They leave alone any skill whose folder did not change upstream and count it as up to date. Use `--force` to reinstall every skill anyway.
+When an update covers more than one remote skill, as `update --all` and `update --group` usually do, skillshare groups the skills by repository and clones each repository once. It leaves alone any skill whose folder did not change upstream and counts it as up to date. Use `--force` to reinstall every skill anyway. A single skill is always reinstalled.
 
 ### Example Output
 

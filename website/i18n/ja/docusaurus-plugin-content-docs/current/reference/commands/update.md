@@ -224,7 +224,7 @@ skillshare update --all
 1. すべての tracked repositories（git pull）
 2. source metadata を持つすべての skill（upstream が変わったときに再インストール）
 
-`update --all` と `update --group` はリモート skill をリポジトリごとにまとめ、各リポジトリを 1 回だけ clone します。フォルダが upstream で変わっていない skill には手を付けず、up to date として数えます。すべてを再インストールするには `--force` を使います。
+`update --all` や `update --group` のように複数のリモート skill を更新するときは、skill をリポジトリごとにまとめ、各リポジトリを 1 回だけ clone します。フォルダが upstream で変わっていない skill には手を付けず、up to date として数えます。すべてを再インストールするには `--force` を使います。skill が 1 つだけのときは常に再インストールします。
 
 ### 出力例
 

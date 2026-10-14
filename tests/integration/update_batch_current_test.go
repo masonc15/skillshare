@@ -125,3 +125,46 @@ func TestUpdateProject_UnchangedGroupedSkillsAreUpToDate(t *testing.T) {
 		t.Fatalf("project mode, unchanged upstream: got %+v, want 0 updated and 2 up to date", got)
 	}
 }
+
+// A project lock pins each skill's commit. An upstream commit that leaves a
+// skill's folder alone must not move its pin, since the files did not change.
+func TestUpdateProject_TreeMatchKeepsLockPin(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+	projectRoot := sb.SetupProjectDir("claude")
+
+	remote := filepath.Join(sb.Root, "pinned-grouped.git")
+	work := filepath.Join(sb.Root, "pinned-grouped-work")
+	gitInit(t, remote, true)
+	gitClone(t, remote, work)
+	for _, name := range []string{"alpha", "beta"} {
+		writeGroupedSkill(t, work, name, "v1")
+	}
+	gitAddCommit(t, work, "add skills")
+	gitPush(t, work)
+	for _, name := range []string{"alpha", "beta"} {
+		sb.RunCLIInDir(projectRoot, "install", "file://"+remote+"//skills/"+name, "-p", "--skip-audit").AssertSuccess(t)
+	}
+	lockPath := filepath.Join(projectRoot, ".skillshare", install.LockFileName)
+	before, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("project install wrote no lock: %v", err)
+	}
+
+	writeGroupedSkill(t, work, "unrelated", "v1")
+	gitAddCommit(t, work, "add an unrelated skill")
+	gitPush(t, work)
+
+	result := sb.RunCLIInDir(projectRoot, "update", "--all", "-p", "--skip-audit", "--json")
+	result.AssertSuccess(t)
+	var got updateCounts
+	if err := json.Unmarshal([]byte(result.Stdout), &got); err != nil {
+		t.Fatalf("parse update JSON: %v\n%s", err, result.Stdout)
+	}
+	if got.Updated != 0 || got.UpToDate != 2 {
+		t.Fatalf("unrelated upstream commit: got %+v, want 0 updated and 2 up to date", got)
+	}
+	if after, _ := os.ReadFile(lockPath); string(after) != string(before) {
+		t.Fatalf("lock changed on an unrelated upstream commit:\nbefore: %s\nafter:  %s", before, after)
+	}
+}

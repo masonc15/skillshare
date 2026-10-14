@@ -77,10 +77,10 @@ func TestUpdateSkillsFromRepo_SkipsSkillCurrentInStore(t *testing.T) {
 	}
 }
 
-// When HEAD moves but the skill's tree does not, the skip must refresh the
-// recorded version and commit in the store so the next run's remote check
-// can skip the clone.
-func TestUpdateSkillsFromRepo_TreeMatchRefreshesStoreCommit(t *testing.T) {
+// When HEAD moves but the skill's tree does not, the skip refreshes the
+// recorded version in the store and keeps the full commit, which a project
+// lock pin follows.
+func TestUpdateSkillsFromRepo_TreeMatchRefreshesStoreVersion(t *testing.T) {
 	repo := initTestRepo(t)
 	writeSkill(t, repo, "skills/my-skill", "# v1")
 
@@ -92,11 +92,16 @@ func TestUpdateSkillsFromRepo_TreeMatchRefreshesStoreCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeSkill(t, repo, "skills/other", "# unrelated")
-	head, err := getGitFullHash(repo)
+	before, err := LoadMetadata(sourceDir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	installedCommit := before.Get("my-skill").Commit
+	if installedCommit == "" {
+		t.Fatal("install recorded no commit")
+	}
+
+	writeSkill(t, repo, "skills/other", "# unrelated")
 
 	result, err := UpdateSkillsFromRepo("file://"+repo, "", targets, opts)
 	if err != nil {
@@ -113,9 +118,9 @@ func TestUpdateSkillsFromRepo_TreeMatchRefreshesStoreCommit(t *testing.T) {
 	if entry == nil {
 		t.Fatal("missing store entry")
 	}
-	if entry.Commit != head || entry.Version != result.CommitHash {
-		t.Fatalf("store not refreshed: commit=%q version=%q, want commit=%q version=%q",
-			entry.Commit, entry.Version, head, result.CommitHash)
+	if entry.Commit != installedCommit || entry.Version != result.CommitHash {
+		t.Fatalf("store refresh: commit=%q version=%q, want commit=%q version=%q",
+			entry.Commit, entry.Version, installedCommit, result.CommitHash)
 	}
 }
 
@@ -134,7 +139,7 @@ func TestInstalledSkillMeta_LegacyGroupedKey(t *testing.T) {
 	if installed == nil || installed.storeKey != "my-skill" || installed.TreeHash != "tree" {
 		t.Fatalf("legacy key lookup: got %+v", installed)
 	}
-	if err := refreshSkillMetaVersionIfNeeded(sourceDir, dest, installed, "new", "full-new"); err != nil {
+	if err := refreshSkillMetaVersionIfNeeded(sourceDir, dest, installed, "new"); err != nil {
 		t.Fatal(err)
 	}
 	after, err := LoadMetadata(sourceDir)
@@ -142,7 +147,7 @@ func TestInstalledSkillMeta_LegacyGroupedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := after.Get("my-skill")
-	if entry == nil || entry.Version != "new" || entry.Commit != "full-new" || after.Get("frontend/my-skill") != nil {
+	if entry == nil || entry.Version != "new" || after.Get("frontend/my-skill") != nil {
 		t.Fatalf("refresh must update the legacy key in place, got %+v", after.Entries)
 	}
 }
