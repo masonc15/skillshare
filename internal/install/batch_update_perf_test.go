@@ -118,3 +118,31 @@ func TestUpdateSkillsFromRepo_TreeMatchRefreshesStoreCommit(t *testing.T) {
 			entry.Commit, entry.Version, head, result.CommitHash)
 	}
 }
+
+// Grouped skills may still be stored under a legacy basename key with a
+// Group field; the lookup and the refresh must use that key.
+func TestInstalledSkillMeta_LegacyGroupedKey(t *testing.T) {
+	sourceDir := t.TempDir()
+	dest := filepath.Join(sourceDir, "frontend", "my-skill")
+	store := NewMetadataStore()
+	store.Set("my-skill", &MetadataEntry{Source: "x", Group: "frontend", Version: "old", TreeHash: "tree"})
+	if err := store.Save(sourceDir); err != nil {
+		t.Fatal(err)
+	}
+
+	installed := installedSkillMeta(store, sourceDir, dest)
+	if installed == nil || installed.storeKey != "my-skill" || installed.TreeHash != "tree" {
+		t.Fatalf("legacy key lookup: got %+v", installed)
+	}
+	if err := refreshSkillMetaVersionIfNeeded(sourceDir, dest, installed, "new", "full-new"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := LoadMetadata(sourceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := after.Get("my-skill")
+	if entry == nil || entry.Version != "new" || entry.Commit != "full-new" || after.Get("frontend/my-skill") != nil {
+		t.Fatalf("refresh must update the legacy key in place, got %+v", after.Entries)
+	}
+}
